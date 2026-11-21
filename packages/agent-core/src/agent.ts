@@ -1,9 +1,5 @@
 import type { AgentPlan, TaskRecord } from "../../shared/src/index.js";
 
-/**
- * First orchestration boundary. Planning is deliberately a provider interface:
- * credentials and vendor-specific SDKs belong in server-side adapters.
- */
 export interface ModelProvider {
   createPlan(input: {
     instruction: string;
@@ -14,8 +10,10 @@ export interface ModelProvider {
 export interface TaskStore {
   create(task: TaskRecord): Promise<void>;
   get(taskId: string): Promise<TaskRecord | null>;
+  update(task: TaskRecord): Promise<void>;
 }
 
+/** Orchestrates planning only. It never executes model-generated commands. */
 export class AgentCore {
   constructor(
     private readonly model: ModelProvider,
@@ -25,15 +23,24 @@ export class AgentCore {
   async plan(task: TaskRecord): Promise<AgentPlan> {
     await this.store.create({ ...task, status: "planning" });
 
-    const plan = await this.model.createPlan({
-      instruction: task.instruction,
-      projectId: task.projectId
-    });
-
-    if (plan.steps.length === 0) {
-      throw new Error("The planner returned an empty plan.");
+    try {
+      const plan = await this.model.createPlan({
+        instruction: task.instruction,
+        projectId: task.projectId
+      });
+      await this.store.update({
+        ...task,
+        status: "awaiting_approval",
+        plan
+      });
+      return plan;
+    } catch (error) {
+      await this.store.update({
+        ...task,
+        status: "failed",
+        error: error instanceof Error ? error.message : "Planning failed"
+      });
+      throw error;
     }
-
-    return plan;
   }
 }
