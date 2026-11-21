@@ -1,27 +1,40 @@
 import "dotenv/config";
 import Fastify from "fastify";
 import { randomUUID } from "node:crypto";
-import { CreateTaskSchema } from "../../../packages/shared/src/index.js";
+import { AgentCore, type TaskStore } from "../../../packages/agent-core/src/agent.js";
+import {
+  CreateTaskSchema,
+  type TaskRecord
+} from "../../../packages/shared/src/index.js";
+import { OpenAICompatibleProvider } from "./openai-provider.js";
 
 const app = Fastify({
   logger: { level: process.env.LOG_LEVEL ?? "info" },
   bodyLimit: 16 * 1024
 });
 
-// Temporary in-memory intake store. Replace with Supabase before multi-instance use.
-const tasks = new Map<string, {
-  id: string;
-  projectId: string;
-  instruction: string;
-  source: "web" | "telegram";
-  status: "queued";
-  createdAt: string;
-}>();
+// Temporary in-memory store. Supabase persistence is a later milestone.
+const tasks = new Map<string, TaskRecord>();
+const store: TaskStore = {
+  async create(task) { tasks.set(task.id, task); },
+  async get(taskId) { return tasks.get(taskId) ?? null; },
+  async update(task) { tasks.set(task.id, task); }
+};
+
+const apiKey = process.env.LLM_API_KEY;
+const modelName = process.env.LLM_MODEL;
+const planner = apiKey && modelName
+  ? new AgentCore(
+      new OpenAICompatibleProvider(apiKey, modelName, process.env.LLM_BASE_URL),
+      store
+    )
+  : null;
 
 app.get("/health", async () => ({
   ok: true,
   service: "aeeral-dev-api",
-  version: "0.1.0"
+  version: "0.2.0",
+  plannerConfigured: Boolean(planner)
 }));
 
 app.post("/v1/tasks", async (request, reply) => {
@@ -33,20 +46,38 @@ app.post("/v1/tasks", async (request, reply) => {
     });
   }
 
-  const task = {
+  if (!planner) {
+    return reply.code(503).send({
+      error: "PLANNER_NOT_CONFIGURED",
+      message: "Set LLM_API_KEY and LLM_MODEL in the server environment."
+    });
+  }
+
+  const task: TaskRecord = {
     id: randomUUID(),
     ...parsed.data,
-    status: "queued" as const,
+    status: "queued",
     createdAt: new Date().toISOString()
   };
 
-  tasks.set(task.id, task);
-  return reply.code(202).send({ task });
+  try {
+    const plan = await planner.plan(task);
+    return reply.code(201).send({
+      task: await store.get(task.id),
+      plan
+    });
+  } catch (error) {
+    request.log.error({ err: error, taskId: task.id }, "Task planning failed");
+    return reply.code(502).send({
+      error: "PLANNING_FAILED",
+      task: await store.get(task.id)
+    });
+  }
 });
 
 app.get("/v1/tasks/:id", async (request, reply) => {
   const { id } = request.params as { id: string };
-  const task = tasks.get(id);
+  const task = await store.get(id);
   if (!task) return reply.code(404).send({ error: "TASK_NOT_FOUND" });
   return { task };
 });
