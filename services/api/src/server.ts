@@ -84,7 +84,8 @@ app.get("/v1/tasks/:id", async (request, reply) => {
 
 const start = async () => {
   const port = Number(process.env.PORT ?? 4000);
-  const host = process.env.HOST ?? "127.0.0.1";
+  // Render requires binding to the externally reachable interface.
+  const host = process.env.HOST ?? "0.0.0.0";
   await app.listen({ port, host });
 };
 
