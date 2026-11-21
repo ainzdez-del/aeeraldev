@@ -6,6 +6,7 @@
   "description": "Autonomous AI software engineering agent",
   "scripts": {
     "dev:api": "tsx watch services/api/src/server.ts",
+    "start:api": "node dist/services/api/src/server.js",
     "typecheck": "tsc --noEmit",
     "build": "tsc"
   },
