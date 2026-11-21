@@ -21,6 +21,17 @@ export const CreateTaskSchema = z.object({
 
 export type CreateTaskInput = z.infer<typeof CreateTaskSchema>;
 
+export const AgentPlanSchema = z.object({
+  summary: z.string().min(1).max(2_000),
+  steps: z.array(z.object({
+    id: z.string().min(1).max(64),
+    description: z.string().min(1).max(1_000),
+    requiresApproval: z.boolean()
+  })).min(1).max(20)
+});
+
+export type AgentPlan = z.infer<typeof AgentPlanSchema>;
+
 export interface TaskRecord {
   id: string;
   projectId: string;
@@ -28,13 +39,6 @@ export interface TaskRecord {
   source: CreateTaskInput["source"];
   status: TaskStatus;
   createdAt: string;
-}
-
-export interface AgentPlan {
-  summary: string;
-  steps: Array<{
-    id: string;
-    description: string;
-    requiresApproval: boolean;
-  }>;
+  plan?: AgentPlan;
+  error?: string;
 }
